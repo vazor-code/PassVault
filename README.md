@@ -42,7 +42,7 @@ cd PassVault
 pip install -r requirements.txt
 
 # 3. Запустите приложение
-python PassVault.py
+python passvault.py
 ```
 
 > При первом запуске автоматически создаются файлы `key.key` и `vault.json`.  
