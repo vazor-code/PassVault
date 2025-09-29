@@ -17,7 +17,7 @@
 ## 📸 Скриншоты
 
 ### Основной интерфейс
-![Скриншот PassVault](screenshots/passvault-screenshot.png)
+![Скриншот PassVault](screenshots/passvault-screenshot1.png)
 
 ---
 
