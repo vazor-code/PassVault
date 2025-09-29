@@ -1,12 +1,8 @@
+from textual.app import App, ComposeResult
+from textual.widgets import Header, Footer, Button, Static, Input, DataTable, Label
+from textual.containers import Vertical, Horizontal
 from cryptography.fernet import Fernet
-import os
-import string
-import random
-import json
-
-print("==============================")
-print("🔐 PassVault запущен!")
-print("==============================")
+import os, string, random, json
 
 # ---- Настройки файлов ----
 KEY_FILE = "key.key"
@@ -17,91 +13,125 @@ if not os.path.exists(KEY_FILE) or os.path.getsize(KEY_FILE) == 0:
     key = Fernet.generate_key()
     with open(KEY_FILE, "wb") as file:
         file.write(key)
-    print("🔑 Ключ создан и сохранён.")
 else:
     with open(KEY_FILE, "rb") as file:
         key = file.read()
-    print("🔑 Ключ уже существует.")
-
 fernet = Fernet(key)
 
 # ---- База паролей ----
-if os.path.isfile(VAULT_FILE):
-    print("📂 База паролей найдена.")
-else:
-    print("📂 База паролей пуста.")
+if not os.path.isfile(VAULT_FILE):
     with open(VAULT_FILE, "wb") as vault:
         vault.write(fernet.encrypt(json.dumps({}).encode()))
 
-# ---- Основной цикл ----
-while True:
-    print("\nВыберите действие:\n1. Добавить запись\n2. Найти запись\n3. Удалить запись\n4. Сгенерировать пароль\n5. Выйти")
-    choice = input("Выбор: ").strip()
-
-    # ---- Загрузка базы ----
+# ---- Работа с базой ----
+def load_vault():
     with open(VAULT_FILE, "rb") as f:
-        encrypted = f.read()
-    vault = json.loads(fernet.decrypt(encrypted))
+        return json.loads(fernet.decrypt(f.read()))
 
-    # ---- 1. Добавить запись ----
-    if choice == "1":
-        service = input("Сервис: ")
-        login = input("Логин: ")
-        password = input("Пароль (оставить пустым для генерации): ")
-        if password.strip() == "":
-            safe_symbols = "!@#$%^&*-_+="
-            chars = string.ascii_letters + string.digits + safe_symbols
-            password = ''.join(random.choice(chars) for _ in range(10))
+def save_vault(vault):
+    with open(VAULT_FILE, "wb") as f:
+        f.write(fernet.encrypt(json.dumps(vault).encode()))
 
-        if service in vault:
-            if isinstance(vault[service], list):
-                vault[service].append({"login": login, "password": password})
+def generate_password(length=10):
+    chars = string.ascii_letters + string.digits + "!@#$%^&*-_+="
+    return ''.join(random.choice(chars) for _ in range(length))
+
+# ---- Textual App ----
+class PassVaultApp(App):
+    BINDINGS = [("q", "quit", "Quit")]
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Vertical():
+            yield Static("🔐 PassVault", id="title")
+            with Horizontal():
+                yield Button("Add Entry", id="add")
+                yield Button("Find Entry", id="find")
+                yield Button("Delete Entry", id="delete")
+                yield Button("Generate Password", id="gen")
+            yield Vertical(id="form_container")
+            yield DataTable(id="vault_table")
+            yield Label("", id="status")
+        yield Footer()
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        form_container = self.query_one("#form_container")
+        table = self.query_one("#vault_table")
+        status = self.query_one("#status")
+        vault = load_vault()
+
+        # ---- Главное меню ----
+        if event.button.id in ["add", "find", "delete", "gen"]:
+            form_container.remove_children()  # очищаем форму перед новым действием
+
+            if event.button.id == "add":
+                service_input = Input(placeholder="Service", id="service")
+                login_input = Input(placeholder="Login", id="login")
+                password_input = Input(placeholder="Password (optional)", id="password")
+                save_btn = Button("Save", id="save_add")
+                await form_container.mount(service_input, login_input, password_input, save_btn)
+
+            elif event.button.id == "find":
+                table.clear(columns=True)
+                table.add_columns("Login", "Password")
+                service_input = Input(placeholder="Service to find", id="find_service")
+                search_btn = Button("Search", id="search")
+                await form_container.mount(service_input, search_btn)
+
+            elif event.button.id == "delete":
+                service_input = Input(placeholder="Service to delete", id="del_service")
+                del_btn = Button("Delete Confirm", id="del_confirm")
+                await form_container.mount(service_input, del_btn)
+
+            elif event.button.id == "gen":
+                pw = generate_password()
+                status.update(f"🔑 Generated password: {pw}")
+
+        # ---- Кнопки внутри форм ----
+        elif event.button.id == "save_add":
+            service = self.query_one("#service", Input).value
+            login = self.query_one("#login", Input).value
+            password = self.query_one("#password", Input).value
+            if not password.strip():
+                password = generate_password()
+            if service in vault:
+                if isinstance(vault[service], list):
+                    vault[service].append({"login": login, "password": password})
+                else:
+                    vault[service] = [vault[service], {"login": login, "password": password}]
             else:
-                vault[service] = [vault[service], {"login": login, "password": password}]
-        else:
-            vault[service] = {"login": login, "password": password}
+                vault[service] = {"login": login, "password": password}
+            save_vault(vault)
+            status.update(f"✅ Added {service} with password {password}")
+            form_container.remove_children()
 
-        with open(VAULT_FILE, "wb") as f:
-            f.write(fernet.encrypt(json.dumps(vault).encode()))
-        print(f"\n👉 Пароль: {password}\n✅ Запись для {service} добавлена.")
-
-    # ---- 2. Найти запись ----
-    elif choice == "2":
-        service = input("Введите сервис: ")
-        if service in vault:
-            entries = vault[service]
-            if isinstance(entries, list):
-                for i, v in enumerate(entries, 1):
-                    print(f"{i}. Логин: {v['login']} | Пароль: {v['password']}")
+        elif event.button.id == "search":
+            service = self.query_one("#find_service", Input).value
+            table.clear(columns=True)
+            table.add_columns("Login", "Password")
+            if service in vault:
+                entries = vault[service]
+                if isinstance(entries, list):
+                    for v in entries:
+                        table.add_row(v["login"], v["password"])
+                else:
+                    table.add_row(entries["login"], entries["password"])
+                status.update(f"✅ Found entries for {service}")
             else:
-                print(f"Логин: {entries['login']} | Пароль: {entries['password']}")
-        else:
-            print("❌ Сервис не найден.")
+                status.update(f"❌ Service {service} not found")
+            form_container.remove_children()
 
-    # ---- 3. Удалить запись ----
-    elif choice == "3":
-        service = input("Введите сервис для удаления: ")
-        if service in vault:
-            del vault[service]
-            with open(VAULT_FILE, "wb") as f:
-                f.write(fernet.encrypt(json.dumps(vault).encode()))
-            print(f"✅ Все записи для {service} удалены.")
-        else:
-            print("❌ Сервис не найден.")
+        elif event.button.id == "del_confirm":
+            service = self.query_one("#del_service", Input).value
+            if service in vault:
+                del vault[service]
+                save_vault(vault)
+                table.clear()
+                status.update(f"✅ Deleted all entries for {service}")
+            else:
+                status.update(f"❌ Service {service} not found")
+            form_container.remove_children()
 
-    # ---- 4. Сгенерировать пароль ----
-    elif choice == "4":
-        length = input("Длина пароля (по умолчанию 10): ")
-        length = int(length) if length.isdigit() else 10
-        safe_symbols = "!@#$%^&*-_+="
-        chars = string.ascii_letters + string.digits + safe_symbols
-        password = ''.join(random.choice(chars) for _ in range(length))
-        print(f"🔑 Сгенерированный пароль: {password}")
 
-    # ---- 5. Выход ----
-    elif choice == "5":
-        print("👋 Выход. До встречи!")
-        break
-
-    else:
-        print("Введите число от 1 до 5.")
+if __name__ == "__main__":
+    PassVaultApp().run()
